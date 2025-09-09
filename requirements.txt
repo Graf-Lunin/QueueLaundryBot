@@ -24,6 +24,11 @@ httpcore==1.0.9
 httpx==0.28.1
 idna==3.10
 Jinja2==3.1.6
+Kivy==2.3.1
+kivy-deps.angle==0.4.0
+kivy-deps.glew==0.3.1
+Kivy-Garden==0.1.5
+kivy_deps.sdl2==0.8.0
 markdown-it-py==4.0.0
 MarkupSafe==3.0.2
 mdurl==0.1.2
@@ -35,6 +40,7 @@ psutil==7.0.0
 ptyprocess==0.7.0
 pycparser==2.22
 Pygments==2.19.2
+pypiwin32==223
 pyproject_hooks==1.2.0
 PyQt5==5.15.11
 PyQt5-Qt5==5.15.2
@@ -64,5 +70,3 @@ types-python-dateutil==2.9.0.20250822
 typing_extensions==4.15.0
 urllib3==2.5.0
 virtualenv==20.34.0
-
-
