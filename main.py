@@ -3,6 +3,7 @@ import datetime
 import logging
 from telebot import TeleBot, types
 from threading import Timer
+import threading
 import time
 
 
@@ -335,6 +336,60 @@ def cancel_booking(message):
         bot.send_message(message.chat.id, "Произошла ошибка при отмене записи")
 
 
+def keep_alive_worker():
+    while True:
+        try:
+            conn = sqlite3.connect('laundry.db')
+            cursor = conn.cursor()
+            current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            cursor.execute(
+                "INSERT INTO keep_alive (timestamp, action) VALUES (?, ?)",
+                (current_time, 'ping')
+            )
+            conn.commit()
+            cursor.execute(
+                "DELETE FROM keep_alive WHERE timestamp < datetime('now', '-1 minute')"
+            )
+            conn.commit()
+
+            logger.info(f"Keep-alive: база данных активна - {current_time}")
+            conn.close()
+
+        except Exception as e:
+            logger.error(f"Ошибка в keep-alive: {e}")
+            try:
+                conn = sqlite3.connect('laundry.db')
+                cursor = conn.cursor()
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS keep_alive (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT,
+                        action TEXT
+                    )
+                ''')
+                conn.commit()
+                conn.close()
+            except Exception as create_error:
+                logger.error(f"Ошибка создания таблицы keep_alive: {create_error}")
+        time.sleep(10)
+
+
+def start_keep_alive():
+    """Запуск фоновой задачи"""
+    keep_alive_thread = threading.Thread(target=keep_alive_worker, daemon=True)
+    keep_alive_thread.start()
+    logger.info("Keep-alive задача запущена")
+
+
 if __name__ == "__main__":
     logger.info("Бот запущен...")
     bot.infinity_polling()
+
+    start_keep_alive()
+
+    try:
+        bot.infinity_polling(skip_pending=True)
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
