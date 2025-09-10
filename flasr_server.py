@@ -13,7 +13,7 @@ def index():
     return "Пустой сервер работает!!"
 
 async def ping_site():
-    url = os.getenv('URL_FOR_PING')
+    url = 'https://queuelaundrybot.onrender.com'
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -26,7 +26,7 @@ def run_ping_site():
 
 def flask_run():
     print("Запуск Flask-сервера...")
-    port = int(os.getenv('PORT'))
+    port = '8888'
     from waitress import serve
     serve(app, host='0.0.0.0', port=port)
 
