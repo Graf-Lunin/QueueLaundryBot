@@ -47,7 +47,6 @@ def debug_files():
         structure = {}
         try:
             for item in os.listdir(path):
-                # Пропускаем скрытые файлы и системные папки
                 if item.startswith('.') or item in ['venv', '__pycache__', 'node_modules']:
                     continue
                     
@@ -62,7 +61,7 @@ def debug_files():
                     structure[item] = {
                         'type': 'file',
                         'size': os.path.getsize(full_path),
-                        'modified': os.path.getmtime(full_path)
+                        'modified': datetime.datetime.fromtimestamp(os.path.getmtime(full_path)).isoformat()
                     }
         except Exception as e:
             structure['error'] = str(e)
@@ -90,11 +89,9 @@ def debug_db():
         conn = sqlite3.connect('laundry.db')
         cursor = conn.cursor()
         
-        # Информация о таблицах
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = cursor.fetchall()
         
-        # Количество записей в каждой таблице
         table_info = {}
         for table in tables:
             table_name = table[0]
@@ -107,7 +104,9 @@ def debug_db():
         return jsonify({
             'tables': tables,
             'counts': table_info,
-            'db_size': os.path.getsize('laundry.db') if os.path.exists('laundry.db') else 0
+            'db_size': os.path.getsize('laundry.db') if os.path.exists('laundry.db') else 0,
+            'db_file_exists': os.path.exists('laundry.db'),
+            'current_time': datetime.datetime.now().isoformat()
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -120,22 +119,18 @@ def debug_db_data():
         conn = sqlite3.connect('laundry.db')
         cursor = conn.cursor()
         
-        # Получаем все таблицы
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [table[0] for table in cursor.fetchall()]
         
         result = {}
         
         for table in tables:
-            # Получаем структуру таблицы (колонки)
             cursor.execute(f"PRAGMA table_info({table})")
             columns = [col[1] for col in cursor.fetchall()]
             
-            # Получаем все данные из таблицы
             cursor.execute(f"SELECT * FROM {table}")
             rows = cursor.fetchall()
             
-            # Форматируем данные
             table_data = []
             for row in rows:
                 row_data = {}
@@ -164,15 +159,12 @@ def debug_db_bookings():
         conn = sqlite3.connect('laundry.db')
         cursor = conn.cursor()
         
-        # Получаем структуру таблицы bookings
         cursor.execute("PRAGMA table_info(bookings)")
         columns = [col[1] for col in cursor.fetchall()]
         
-        # Получаем все данные из bookings
         cursor.execute("SELECT * FROM bookings ORDER BY created_at DESC")
         rows = cursor.fetchall()
         
-        # Форматируем данные
         bookings_data = []
         for row in rows:
             booking = {}
@@ -193,28 +185,96 @@ def debug_db_bookings():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/debug/system')
+def debug_system():
+    """Полная информация о системе"""
+    return jsonify({
+        'current_directory': os.getcwd(),
+        'files': os.listdir('.'),
+        'database_file_exists': os.path.exists('laundry.db'),
+        'database_size': os.path.getsize('laundry.db') if os.path.exists('laundry.db') else 0,
+        'environment_variables': {k: v for k, v in os.environ.items() if 'KEY' not in k and 'TOKEN' not in k and 'PASS' not in k},
+        'server_time': datetime.datetime.now().isoformat(),
+        'python_version': os.sys.version,
+        'process_id': os.getpid(),
+        'render': True,
+        'ephemeral_storage': True
+    })
+
+
+@app.route('/debug/db/current')
+def debug_db_current():
+    """Текущее состояние БД с дополнительной информацией"""
+    try:
+        db_info = {
+            'db_file': os.path.abspath('laundry.db'),
+            'db_size': os.path.getsize('laundry.db') if os.path.exists('laundry.db') else 0,
+            'file_exists': os.path.exists('laundry.db'),
+            'current_time': datetime.datetime.now().isoformat(),
+            'working_dir': os.getcwd(),
+            'files_in_dir': os.listdir('.')
+        }
+        
+        if not db_info['file_exists']:
+            return jsonify({
+                'warning': 'База данных не существует! Она будет создана при первом обращении.',
+                'db_info': db_info
+            })
+        
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [table[0] for table in cursor.fetchall()]
+        
+        result = {'db_info': db_info, 'tables': {}}
+        
+        for table in tables:
+            cursor.execute(f"SELECT * FROM {table}")
+            rows = cursor.fetchall()
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            result['tables'][table] = {
+                'columns': columns,
+                'row_count': len(rows),
+                'data': rows
+            }
+        
+        conn.close()
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e), 'traceback': str(e.__traceback__)}), 500
+
+
 # Функции для работы с базой данных
 def init_db():
-    conn = sqlite3.connect('laundry.db')
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
 
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS bookings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        date TEXT,
-        time_slot TEXT,
-        full_name TEXT,
-        room_number TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bookings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            date TEXT,
+            time_slot TEXT,
+            full_name TEXT,
+            room_number TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+        logger.info("База данных инициализирована")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при инициализации БД: {e}")
 
 
 def cleanup_old_records():
@@ -223,21 +283,25 @@ def cleanup_old_records():
         conn = sqlite3.connect('laundry.db')
         cursor = conn.cursor()
         cursor.execute("DELETE FROM bookings WHERE date < ?", (today,))
+        deleted_count = cursor.rowcount
         conn.commit()
         conn.close()
-        logger.info("Старые записи очищены")
+        logger.info(f"Старые записи очищены: удалено {deleted_count} записей")
     except Exception as e:
         logger.error(f"Ошибка при очистке записей: {e}")
 
 
 def schedule_daily_cleanup():
     now = datetime.datetime.now()
-    next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
+    next_midnight = now.replace(hour=0, minute=1, second=0, microsecond=0) + datetime.timedelta(days=1)
     seconds_until_midnight = (next_midnight - now).total_seconds()
+    
+    logger.info(f"Следующая очистка через {seconds_until_midnight} секунд")
     Timer(seconds_until_midnight, daily_cleanup_task).start()
 
 
 def daily_cleanup_task():
+    logger.info("Запуск ежедневной очистки...")
     cleanup_old_records()
     schedule_daily_cleanup()
 
@@ -487,12 +551,13 @@ def cancel_booking(message):
             "DELETE FROM bookings WHERE user_id = ?",
             (message.from_user.id,)
         )
+        deleted_count = cursor.rowcount
         conn.commit()
         conn.close()
 
         bot.send_message(
             message.chat.id,
-            "✅ Ваша запись успешно отменена.",
+            f"✅ Ваша запись успешно отменена. Удалено записей: {deleted_count}",
             reply_markup=main_menu()
         )
 
@@ -506,13 +571,12 @@ def ping_self():
     """Пинг самого себя для поддержания активности"""
     while True:
         try:
-            # Получаем URL из переменных окружения или используем дефолтный
             base_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:4000')
             response = requests.get(f'{base_url}/health', timeout=10)
-            print(f"Self-ping successful: {response.status_code}")
+            logger.info(f"Self-ping successful: {response.status_code}")
         except Exception as e:
-            print(f"Self-ping failed: {e}")
-        time.sleep(300)  # Каждые 5 минут
+            logger.error(f"Self-ping failed: {e}")
+        time.sleep(300)
 
 
 def start_bot():
@@ -524,16 +588,25 @@ def start_bot():
 def start_flask_server():
     """Запуск Flask сервера"""
     port = int(os.environ.get('PORT', 4000))
+    logger.info(f"Запуск Flask сервера на порту {port}")
     app.run(
         host='0.0.0.0',
         port=port,
-        debug=False
+        debug=False,
+        use_reloader=False
     )
 
 
 if __name__ == '__main__':
     # Инициализация базы данных
+    logger.info("Инициализация приложения...")
     init_db()
+    
+    # Проверка существования БД
+    if os.path.exists('laundry.db'):
+        logger.info("База данных существует")
+    else:
+        logger.warning("База данных не существует, будет создана при первом обращении")
 
     # Запуск ежедневной очистки
     schedule_daily_cleanup()
@@ -546,5 +619,5 @@ if __name__ == '__main__':
     flask_thread.start()
 
     # Запуск бота в основном потоке
+    logger.info("Запуск бота...")
     start_bot()
-
