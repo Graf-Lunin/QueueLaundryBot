@@ -40,303 +40,77 @@ def health_check():
     return "OK", 200
 
 
-@app.route('/api/bookings')
-def get_bookings():
-    """API для получения всех текущих записей"""
+@app.route('/debug/files')
+def debug_files():
+    """Показать структуру файлов сервера"""
+    def get_file_structure(path='.'):
+        structure = {}
+        try:
+            for item in os.listdir(path):
+                # Пропускаем скрытые файлы и системные папки
+                if item.startswith('.') or item in ['venv', '__pycache__', 'node_modules']:
+                    continue
+                    
+                full_path = os.path.join(path, item)
+                if os.path.isdir(full_path):
+                    structure[item] = {
+                        'type': 'directory',
+                        'size': get_folder_size(full_path),
+                        'children': get_file_structure(full_path)
+                    }
+                else:
+                    structure[item] = {
+                        'type': 'file',
+                        'size': os.path.getsize(full_path),
+                        'modified': os.path.getmtime(full_path)
+                    }
+        except Exception as e:
+            structure['error'] = str(e)
+        return structure
+
+    def get_folder_size(path):
+        total = 0
+        try:
+            for entry in os.scandir(path):
+                if entry.is_file():
+                    total += entry.stat().st_size
+                elif entry.is_dir():
+                    total += get_folder_size(entry.path)
+        except:
+            pass
+        return total
+
+    return jsonify(get_file_structure())
+
+
+@app.route('/debug/db')
+def debug_db():
+    """Показать информацию о базе данных"""
     try:
         conn = sqlite3.connect('laundry.db')
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, user_id, username, first_name, last_name, 
-                   date, time_slot, full_name, room_number, created_at 
-            FROM bookings 
-            ORDER BY date, time_slot
-        """)
         
-        bookings = []
-        for row in cursor.fetchall():
-            bookings.append({
-                'id': row[0],
-                'user_id': row[1],
-                'username': row[2],
-                'first_name': row[3],
-                'last_name': row[4],
-                'date': row[5],
-                'time_slot': row[6],
-                'full_name': row[7],
-                'room_number': row[8],
-                'created_at': row[9]
-            })
+        # Информация о таблицах
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = cursor.fetchall()
+        
+        # Количество записей в каждой таблице
+        table_info = {}
+        for table in tables:
+            table_name = table[0]
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            count = cursor.fetchone()[0]
+            table_info[table_name] = count
         
         conn.close()
-        return jsonify(bookings)
-    
-    except Exception as e:
-        logger.error(f"Ошибка при получении записей: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/bookings/<int:booking_id>', methods=['DELETE'])
-def delete_booking(booking_id):
-    """API для удаления записи"""
-    try:
-        conn = sqlite3.connect('laundry.db')
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
-        conn.commit()
-        conn.close()
         
-        return jsonify({'success': True, 'message': 'Запись удалена'})
-    
+        return jsonify({
+            'tables': tables,
+            'counts': table_info,
+            'db_size': os.path.getsize('laundry.db') if os.path.exists('laundry.db') else 0
+        })
     except Exception as e:
-        logger.error(f"Ошибка при удалении записи: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/admin')
-def admin_panel():
-    """Админ-панель для просмотра записей"""
-    return '''
-    <!DOCTYPE html>
-    <html lang="ru">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Админ-панель - Записи на стирку</title>
-        <style>
-            body { 
-                font-family: Arial, sans-serif; 
-                margin: 20px; 
-                background-color: #f5f5f5;
-            }
-            .container {
-                max-width: 1400px;
-                margin: 0 auto;
-                background: white;
-                padding: 20px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h1 {
-                text-align: center;
-                color: #333;
-                margin-bottom: 20px;
-            }
-            table { 
-                width: 100%; 
-                border-collapse: collapse; 
-                margin-top: 20px;
-                font-size: 14px;
-            }
-            th, td { 
-                border: 1px solid #ddd; 
-                padding: 10px; 
-                text-align: left; 
-            }
-            th { 
-                background-color: #4CAF50; 
-                color: white; 
-                position: sticky;
-                top: 0;
-            }
-            tr:nth-child(even) { 
-                background-color: #f9f9f9; 
-            }
-            tr:hover {
-                background-color: #f1f1f1;
-            }
-            .delete-btn { 
-                color: red; 
-                cursor: pointer; 
-                font-weight: bold;
-                padding: 5px 10px;
-                border: 1px solid red;
-                border-radius: 3px;
-                background: #ffe6e6;
-            }
-            .delete-btn:hover {
-                background: #ffcccc;
-            }
-            .status {
-                padding: 5px;
-                border-radius: 3px;
-                font-weight: bold;
-            }
-            .status-complete {
-                background: #d4edda;
-                color: #155724;
-            }
-            .status-pending {
-                background: #fff3cd;
-                color: #856404;
-            }
-            .refresh-btn {
-                background: #007bff;
-                color: white;
-                border: none;
-                padding: 10px 15px;
-                border-radius: 5px;
-                cursor: pointer;
-                margin-bottom: 10px;
-            }
-            .refresh-btn:hover {
-                background: #0056b3;
-            }
-            .last-update {
-                text-align: right;
-                color: #666;
-                font-size: 12px;
-                margin-bottom: 10px;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>📋 Записи на стирку</h1>
-            
-            <div class="controls">
-                <button class="refresh-btn" onclick="loadBookings()">🔄 Обновить</button>
-                <div class="last-update" id="last-update">Последнее обновление: -</div>
-            </div>
-            
-            <div id="bookings-container">
-                <table id="bookings-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Дата</th>
-                            <th>Время</th>
-                            <th>ФИО</th>
-                            <th>Комната</th>
-                            <th>Username</th>
-                            <th>User ID</th>
-                            <th>Имя</th>
-                            <th>Фамилия</th>
-                            <th>Дата создания</th>
-                            <th>Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody id="bookings-body">
-                        <tr>
-                            <td colspan="11" style="text-align: center;">Загрузка данных...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <script>
-            // Функция для обновления времени последнего обновления
-            function updateLastUpdateTime() {
-                const now = new Date();
-                const timeString = now.toLocaleTimeString('ru-RU');
-                document.getElementById('last-update').textContent = 
-                    `Последнее обновление: ${timeString}`;
-            }
-
-            // Функция для загрузки записей
-            function loadBookings() {
-                fetch('/api/bookings')
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Ошибка сети');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        const tbody = document.getElementById('bookings-body');
-                        
-                        if (data.length === 0) {
-                            tbody.innerHTML = `
-                                <tr>
-                                    <td colspan="11" style="text-align: center; color: #666;">
-                                        Нет активных записей
-                                    </td>
-                                </tr>
-                            `;
-                            return;
-                        }
-                        
-                        tbody.innerHTML = '';
-                        
-                        data.forEach(booking => {
-                            const row = document.createElement('tr');
-                            row.innerHTML = `
-                                <td>${booking.id}</td>
-                                <td>${booking.date || 'Не указано'}</td>
-                                <td>${booking.time_slot || 'Не указано'}</td>
-                                <td>${booking.full_name || 'Не указано'}</td>
-                                <td>${booking.room_number || 'Не указано'}</td>
-                                <td>${booking.username || 'Не указано'}</td>
-                                <td>${booking.user_id}</td>
-                                <td>${booking.first_name || 'Не указано'}</td>
-                                <td>${booking.last_name || 'Не указано'}</td>
-                                <td>${booking.created_at}</td>
-                                <td>
-                                    <span class="delete-btn" onclick="deleteBooking(${booking.id})">
-                                        ❌ Удалить
-                                    </span>
-                                </td>
-                            `;
-                            tbody.appendChild(row);
-                        });
-                        
-                        updateLastUpdateTime();
-                    })
-                    .catch(error => {
-                        console.error('Ошибка:', error);
-                        const tbody = document.getElementById('bookings-body');
-                        tbody.innerHTML = `
-                            <tr>
-                                <td colspan="11" style="text-align: center; color: red;">
-                                    Ошибка загрузки данных. Попробуйте обновить страницу.
-                                </td>
-                            </tr>
-                        `;
-                    });
-            }
-
-            // Функция для удаления записи
-            function deleteBooking(bookingId) {
-                if (confirm('Вы уверены, что хотите удалить эту запись?')) {
-                    fetch(`/api/bookings/${bookingId}`, {
-                        method: 'DELETE'
-                    })
-                    .then(response => {
-                        if (!response.ok) {
-                            throw new Error('Ошибка сети');
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (data.success) {
-                            alert('Запись удалена');
-                            loadBookings(); // Перезагружаем список
-                        } else {
-                            alert('Ошибка при удалении: ' + (data.error || 'Неизвестная ошибка'));
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Ошибка:', error);
-                        alert('Ошибка при удалении записи');
-                    });
-                }
-            }
-
-            // Автоматическое обновление каждые 30 секунд
-            function startAutoRefresh() {
-                setInterval(loadBookings, 30000);
-            }
-
-            // Загружаем записи при загрузке страницы
-            document.addEventListener('DOMContentLoaded', function() {
-                loadBookings();
-                startAutoRefresh();
-            });
-        </script>
-    </body>
-    </html>
-    '''
+        return jsonify({'error': str(e)}), 500
 
 
 # Функции для работы с базой данных
