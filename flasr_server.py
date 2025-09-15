@@ -1,9 +1,8 @@
 from flask import Flask
-import asyncio
 import os
-import aiohttp
-from apscheduler.schedulers.background import BackgroundScheduler
-from waitress import serve
+import threading
+import time
+import requests
 
 app = Flask(__name__)
 
@@ -15,30 +14,28 @@ def index():
 def health_check():
     return "OK", 200
 
-async def ping_site():
-    url = 'https://queuelaundrybot.onrender.com'
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                print(f'Pinged site, response status: {response.status}')
-    except Exception as e:
-        print(f'Error pinging site: {e}')
+def ping_self():
+    """Пинг самого себя для поддержания активности"""
+    while True:
+        try:
+            # Получаем URL из переменных окружения или используем дефолтный
+            base_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:4000')
+            response = requests.get(f'{base_url}/health', timeout=10)
+            print(f"Self-ping successful: {response.status_code}")
+        except Exception as e:
+            print(f"Self-ping failed: {e}")
+        time.sleep(10)  # Каждые 5 минут
 
-def run_ping_site():
-    asyncio.run(ping_site())
-
-def start_flask_server():
-    """Запускает Flask сервер в отдельном потоке"""
-    def run_server():
-        scheduler = BackgroundScheduler()
-        scheduler.add_job(run_ping_site, 'interval', minutes=10)
-        scheduler.start()
-        
-        port = int(os.environ.get('PORT', 4000))
-        print(f"Запуск Flask сервера на порту {port}...")
-        serve(app, host='0.0.0.0', port=port)
+if __name__ == '__main__':
+    # Запускаем keep-alive в фоновом режиме
+    threading.Thread(target=ping_self, daemon=True).start()
     
-    import threading
-    thread = threading.Thread(target=run_server, daemon=True)
-    thread.start()
-    return thread
+    # Важно: используем порт из переменной окружения
+    port = int(os.environ.get('PORT', 4000))
+    
+    # Запускаем Flask с правильными параметрами
+    app.run(
+        host='0.0.0.0',  # Слушаем все интерфейсы
+        port=port,
+        debug=False
+    )
