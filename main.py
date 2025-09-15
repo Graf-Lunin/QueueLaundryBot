@@ -3,7 +3,7 @@ import datetime
 import logging
 from telebot import TeleBot, types
 from threading import Timer
-from flasr_server import start_flask_serve
+from flasr_server import start_flask_server
 import threading
 import time
 
@@ -341,3 +341,4 @@ if __name__ == "__main__":
     logger.info("Бот запущен...")
     bot.infinity_polling()
     start_flask_serve()
+
