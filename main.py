@@ -40,7 +40,6 @@ def health_check():
     return "OK", 200
 
 
-# Функции для работы с базой данных
 def init_db():
     conn = sqlite3.connect('laundry.db')
     cursor = conn.cursor()
@@ -62,6 +61,80 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+ADMIN_IDS = [1621050180]
+
+
+@bot.message_handler(commands=['admin'])
+def admin_command(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.send_message(message.chat.id, "❌ Доступ запрещен")
+        return
+
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    stats_btn = types.KeyboardButton("📊 Статистика")
+    export_btn = types.KeyboardButton("📥 Экспорт БД")
+    cleanup_btn = types.KeyboardButton("🧹 Очистка старых записей")
+    back_btn = types.KeyboardButton("⬅️ Назад")
+    markup.add(stats_btn, export_btn, cleanup_btn, back_btn)
+
+    bot.send_message(message.chat.id, "Админ-панель:", reply_markup=markup)
+
+
+@bot.message_handler(func=lambda message: message.text == "📊 Статистика")
+def show_stats(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    conn = sqlite3.connect('laundry.db')
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM bookings")
+    total = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM bookings WHERE date = ?",
+                   (datetime.datetime.now().strftime("%d-%m-%Y"),))
+    today = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM bookings WHERE date = ?",
+                   ((datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%d-%m-%Y"),))
+    tomorrow = cursor.fetchone()[0]
+
+    conn.close()
+
+    bot.send_message(
+        message.chat.id,
+        f"📊 Статистика записей:\n\n"
+        f"Всего записей: {total}\n"
+        f"На сегодня: {today}\n"
+        f"На завтра: {tomorrow}"
+    )
+
+
+@bot.message_handler(func=lambda message: message.text == "📥 Экспорт БД")
+def export_db(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    try:
+        # Отправляем файл базы данных
+        with open('laundry.db', 'rb') as db_file:
+            bot.send_document(message.chat.id, db_file, caption="📦 Резервная копия базы данных")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка экспорта: {e}")
+
+
+@bot.message_handler(func=lambda message: message.text == "🧹 Очистка старых записей")
+def manual_cleanup(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+
+    try:
+        cleanup_old_records()
+        bot.send_message(message.chat.id, "✅ Старые записи очищены")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Ошибка очистки: {e}")
 
 
 def cleanup_old_records():
@@ -394,3 +467,4 @@ if __name__ == '__main__':
 
     # Запуск бота в основном потоке
     start_bot()
+
