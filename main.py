@@ -340,5 +340,6 @@ def cancel_booking(message):
 if __name__ == "__main__":
     logger.info("Бот запущен...")
     bot.infinity_polling()
-    start_flask_serve()
+    start_flask_server()
+
 
