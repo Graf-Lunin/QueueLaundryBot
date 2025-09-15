@@ -3,13 +3,11 @@ import os
 import threading
 import time
 import requests
+import sqlite3
 import datetime
 import logging
 from telebot import TeleBot, types
 from threading import Timer
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import urllib.parse
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -21,6 +19,7 @@ app = Flask(__name__)
 # Конфигурация бота
 BOT_TOKEN = "8290372805:AAGwVsrTZYXgZYOGWWB_Eq9DtlNC6KkAGto"
 DEVELOPER_LINK = "https://t.me/Retur8827"
+ADMIN_USER_ID = 1621050180
 bot = TeleBot(BOT_TOKEN)
 
 # Глобальные переменные
@@ -30,111 +29,133 @@ TIME_SLOTS = [
     "20:00-21:00", "21:00-22:00", "22:00-23:00"
 ]
 
-# Конфигурация PostgreSQL
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://laundry_bot_user:V4GTJFTttRgG6C87DBb1BHpltszTSaBm@dpg-d348jbfdiees739lol9g-a/laundry_bot')
-
-# Парсинг URL базы данных
-result = urllib.parse.urlparse(DATABASE_URL)
-db_config = {
-    'dbname': result.path[1:],
-    'user': result.username,
-    'password': result.password,
-    'host': result.hostname,
-    'port': result.port
-}
 
 # Маршруты Flask
 @app.route('/')
 def index():
     return "Пустой сервер работает!!"
 
+
 @app.route('/health')
 def health_check():
     return "OK", 200
 
-@app.route('/keepalive')
-def keep_alive():
-    return "Server is alive", 200
 
-# Функции для работы с базой данных PostgreSQL
-def get_connection():
-    """Создание соединения с PostgreSQL"""
+# Функция для отправки уведомлений администратору
+def send_admin_notification(action, booking_data):
+    """Отправляет уведомление администратору о действии с записью"""
     try:
-        conn = psycopg2.connect(**db_config)
-        return conn
+        user_id = booking_data.get('user_id', 'N/A')
+        username = f"@{booking_data.get('username', 'N/A')}" if booking_data.get('username') else "N/A"
+        first_name = booking_data.get('first_name', 'N/A')
+        last_name = booking_data.get('last_name', 'N/A')
+        date = booking_data.get('date', 'N/A')
+        time_slot = booking_data.get('time_slot', 'N/A')
+        full_name = booking_data.get('full_name', 'N/A')
+        room_number = booking_data.get('room_number', 'N/A')
+        
+        message = (
+            f"📋 {action}\n\n"
+            f"👤 ID: {user_id}\n"
+            f"📧 Юзернейм: {username}\n"
+            f"👨‍💼 Имя: {first_name}\n"
+            f"👨‍💼 Фамилия: {last_name}\n"
+            f"📅 Дата: {date}\n"
+            f"🕐 Время: {time_slot}\n"
+            f"📛 ФИО: {full_name}\n"
+            f"🏠 Комната: {room_number}\n"
+            f"⏰ Время события: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        
+        bot.send_message(ADMIN_USER_ID, message)
+        logger.info(f"Уведомление отправлено администратору: {action}")
+        
     except Exception as e:
-        logger.error(f"Ошибка подключения к PostgreSQL: {e}")
-        return None
+        logger.error(f"Ошибка при отправке уведомления администратору: {e}")
 
+
+# Функции для работы с базой данных
 def init_db():
-    """Инициализация таблиц в PostgreSQL"""
-    try:
-        conn = get_connection()
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bookings (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                date TEXT,
-                time_slot TEXT,
-                full_name TEXT,
-                room_number TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            ''')
-            conn.commit()
-            cursor.close()
-            conn.close()
-            logger.info("База данных PostgreSQL инициализирована")
-    except Exception as e:
-        logger.error(f"Ошибка при инициализации базы данных: {e}")
+    conn = sqlite3.connect('laundry.db')
+    cursor = conn.cursor()
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS bookings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        date TEXT,
+        time_slot TEXT,
+        full_name TEXT,
+        room_number TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    conn.commit()
+    conn.close()
+
 
 def cleanup_old_records():
-    """Очистка старых записей"""
     try:
         today = datetime.datetime.now().strftime("%d-%m-%Y")
-        conn = get_connection()
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM bookings WHERE date < %s", (today,))
-            conn.commit()
-            cursor.close()
-            conn.close()
-            logger.info("Старые записи очищены")
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        # Получаем записи для отправки уведомлений об удалении
+        cursor.execute("SELECT * FROM bookings WHERE date < ?", (today,))
+        old_records = cursor.fetchall()
+        
+        # Удаляем старые записи
+        cursor.execute("DELETE FROM bookings WHERE date < ?", (today,))
+        conn.commit()
+        
+        # Отправляем уведомления об удалении старых записей
+        for record in old_records:
+            booking_data = {
+                'user_id': record[1],
+                'username': record[2],
+                'first_name': record[3],
+                'last_name': record[4],
+                'date': record[5],
+                'time_slot': record[6],
+                'full_name': record[7],
+                'room_number': record[8]
+            }
+            send_admin_notification("🗑️ Автоматическое удаление старой записи", booking_data)
+        
+        conn.close()
+        logger.info("Старые записи очищены")
     except Exception as e:
         logger.error(f"Ошибка при очистке записей: {e}")
 
+
 def schedule_daily_cleanup():
-    """Планирование ежедневной очистки"""
     now = datetime.datetime.now()
     next_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0) + datetime.timedelta(days=1)
     seconds_until_midnight = (next_midnight - now).total_seconds()
     Timer(seconds_until_midnight, daily_cleanup_task).start()
 
+
 def daily_cleanup_task():
-    """Задача ежедневной очистки"""
     cleanup_old_records()
     schedule_daily_cleanup()
 
+
 def get_booked_slots(date):
-    """Получение занятых слотов"""
     try:
-        conn = get_connection()
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT time_slot FROM bookings WHERE date = %s", (date,))
-            booked_slots = [row[0] for row in cursor.fetchall()]
-            cursor.close()
-            conn.close()
-            return booked_slots
-        return []
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT time_slot FROM bookings WHERE date = ?", (date,))
+        booked_slots = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return booked_slots
     except Exception as e:
         logger.error(f"Ошибка при получении занятых слотов: {e}")
         return []
+
 
 # Функции для работы с Telegram ботом
 def main_menu():
@@ -146,11 +167,13 @@ def main_menu():
     markup.add(today_btn, tomorrow_btn, developer_btn, cancel_btn)
     return markup
 
+
 def cancel_menu():
     markup = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
     cancel_btn = types.KeyboardButton("❌ Отменить запись")
     markup.add(cancel_btn)
     return markup
+
 
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -166,6 +189,7 @@ def start_command(message):
         "Выберите день для записи:",
         reply_markup=main_menu()
     )
+
 
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
@@ -187,55 +211,40 @@ def handle_text(message):
             show_time_slots(message, 1)
 
         else:
-            conn = get_connection()
-            if conn:
+            conn = sqlite3.connect('laundry.db')
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bookings WHERE user_id = ? AND full_name IS NULL", (message.from_user.id,))
+            booking = cursor.fetchone()
+            conn.close()
+
+            if booking:
+                process_booking_data(message, booking)
+            else:
+                conn = sqlite3.connect('laundry.db')
                 cursor = conn.cursor()
-                cursor.execute("SELECT * FROM bookings WHERE user_id = %s AND full_name IS NULL", (message.from_user.id,))
+                cursor.execute("""
+                        SELECT id, full_name, room_number 
+                        FROM bookings 
+                        WHERE user_id = ? AND (full_name IS NULL OR room_number IS NULL)
+                    """, (message.from_user.id,))
                 booking = cursor.fetchone()
-                cursor.close()
                 conn.close()
+
+                logger.info(f"Active booking found: {booking}")
 
                 if booking:
                     process_booking_data(message, booking)
                 else:
-                    conn = get_connection()
-                    if conn:
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT id, full_name, room_number 
-                            FROM bookings 
-                            WHERE user_id = %s AND (full_name IS NULL OR room_number IS NULL)
-                        """, (message.from_user.id,))
-                        booking = cursor.fetchone()
-                        cursor.close()
-                        conn.close()
-
-                        logger.info(f"Active booking found: {booking}")
-
-                        if booking:
-                            process_booking_data(message, booking)
-                        else:
-                            bot.send_message(
-                                message.chat.id,
-                                "Пожалуйста, используйте кнопки меню:",
-                                reply_markup=main_menu()
-                            )
-                    else:
-                        bot.send_message(
-                            message.chat.id,
-                            "Ошибка подключения к базе данных",
-                            reply_markup=main_menu()
-                        )
-            else:
-                bot.send_message(
-                    message.chat.id,
-                    "Ошибка подключения к базе данных",
-                    reply_markup=main_menu()
-                )
+                    bot.send_message(
+                        message.chat.id,
+                        "Пожалуйста, используйте кнопки меню:",
+                        reply_markup=main_menu()
+                    )
 
     except Exception as e:
         logger.error(f"Ошибка в handle_text: {e}")
         bot.send_message(message.chat.id, "Произошла ошибка. Попробуйте позже.")
+
 
 def show_time_slots(message, days_offset):
     target_date = (datetime.datetime.now() + datetime.timedelta(days=days_offset)).strftime("%d-%m-%Y")
@@ -264,53 +273,62 @@ def show_time_slots(message, days_offset):
             reply_markup=markup
         )
 
+
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call):
     try:
         if call.data.startswith("slot_"):
             _, date, time_slot = call.data.split("_", 2)
-            conn = get_connection()
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT INTO bookings (user_id, username, first_name, last_name, date, time_slot) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (call.from_user.id, call.from_user.username, call.from_user.first_name,
-                     call.from_user.last_name, date, time_slot)
-                )
-                conn.commit()
-                cursor.close()
-                conn.close()
+            conn = sqlite3.connect('laundry.db')
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO bookings (user_id, username, first_name, last_name, date, time_slot) VALUES (?, ?, ?, ?, ?, ?)",
+                (call.from_user.id, call.from_user.username, call.from_user.first_name,
+                 call.from_user.last_name, date, time_slot)
+            )
+            conn.commit()
+            
+            # Отправляем уведомление о создании временной записи
+            booking_data = {
+                'user_id': call.from_user.id,
+                'username': call.from_user.username,
+                'first_name': call.from_user.first_name,
+                'last_name': call.from_user.last_name,
+                'date': date,
+                'time_slot': time_slot,
+                'full_name': 'Не указано',
+                'room_number': 'Не указан'
+            }
+            send_admin_notification("📝 Создана временная запись (ожидание данных)", booking_data)
+            
+            conn.close()
 
-                bot.send_message(
-                    call.message.chat.id,
-                    "Введите ваше ФИО:",
-                    reply_markup=types.ReplyKeyboardRemove()
-                )
+            bot.send_message(
+                call.message.chat.id,
+                "Введите ваше ФИО:",
+                reply_markup=types.ReplyKeyboardRemove()
+            )
 
-                bot.answer_callback_query(call.id, "Вы выбрали время для стирки")
-            else:
-                bot.answer_callback_query(call.id, "Ошибка подключения к базе данных")
+            bot.answer_callback_query(call.id, "Вы выбрали время для стирки")
 
     except Exception as e:
         logger.error(f"Ошибка в handle_callback: {e}")
         bot.answer_callback_query(call.id, "Произошла ошибка")
 
+
 def process_booking_data(message, booking):
-    conn = get_connection()
-    if not conn:
-        bot.send_message(message.chat.id, "Ошибка подключения к базе данных")
-        return
+    conn = sqlite3.connect('laundry.db')
+    cursor = conn.cursor()
 
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT full_name, room_number FROM bookings WHERE id = %s", (booking[0],))
+        cursor.execute("SELECT full_name, room_number FROM bookings WHERE id = ?", (booking[0],))
         current_data = cursor.fetchone()
 
         logger.info(f"Booking ID: {booking[0]}, Current data: {current_data}, Message text: '{message.text}'")
 
         if current_data[0] is None:
             cursor.execute(
-                "UPDATE bookings SET full_name = %s WHERE id = %s",
+                "UPDATE bookings SET full_name = ? WHERE id = ?",
                 (message.text, booking[0])
             )
             conn.commit()
@@ -323,25 +341,39 @@ def process_booking_data(message, booking):
         elif current_data[1] is None and len(message.text) == 3:
             if message.text[0] in "1234567890" and message.text[1] in "1234567890" and message.text[2] in "1234567890":
                 cursor.execute(
-                    "UPDATE bookings SET room_number = %s WHERE id = %s",
+                    "UPDATE bookings SET room_number = ? WHERE id = ?",
                     (message.text, booking[0])
                 )
                 conn.commit()
 
-                cursor.execute("SELECT date, time_slot, full_name, room_number FROM bookings WHERE id = %s",
-                               (booking[0],))
+                cursor.execute("SELECT * FROM bookings WHERE id = ?", (booking[0],))
                 updated_data = cursor.fetchone()
 
                 logger.info(f"Updated data: {updated_data}")
 
                 if updated_data:
+                    # Формируем данные для уведомления
+                    booking_data = {
+                        'user_id': updated_data[1],
+                        'username': updated_data[2],
+                        'first_name': updated_data[3],
+                        'last_name': updated_data[4],
+                        'date': updated_data[5],
+                        'time_slot': updated_data[6],
+                        'full_name': updated_data[7],
+                        'room_number': updated_data[8]
+                    }
+                    
+                    # Отправляем уведомление о завершении записи
+                    send_admin_notification("✅ Запись успешно создана", booking_data)
+                    
                     bot.send_message(
                         message.chat.id,
                         f"✅ Запись успешно создана!\n\n"
-                        f"📅 Дата: {updated_data[0]}\n"
-                        f"🕐 Время: {updated_data[1]}\n"
-                        f"👤 ФИО: {updated_data[2]}\n"
-                        f"🏠 Комната: {updated_data[3]}",
+                        f"📅 Дата: {updated_data[5]}\n"
+                        f"🕐 Время: {updated_data[6]}\n"
+                        f"👤 ФИО: {updated_data[7]}\n"
+                        f"🏠 Комната: {updated_data[8]}",
                         reply_markup=cancel_menu()
                     )
                 else:
@@ -351,7 +383,7 @@ def process_booking_data(message, booking):
                         reply_markup=main_menu()
                     )
             else:
-                cursor.execute("DELETE FROM bookings WHERE id = %s", (booking[0],))
+                cursor.execute("DELETE FROM bookings WHERE id = ?", (booking[0],))
                 conn.commit()
 
                 bot.send_message(
@@ -360,7 +392,7 @@ def process_booking_data(message, booking):
                     reply_markup=main_menu()
                 )
         else:
-            cursor.execute("DELETE FROM bookings WHERE id = %s", (booking[0],))
+            cursor.execute("DELETE FROM bookings WHERE id = ?", (booking[0],))
             conn.commit()
 
             bot.send_message(
@@ -374,33 +406,57 @@ def process_booking_data(message, booking):
         bot.send_message(message.chat.id, "Произошла ошибка при обработке данных")
 
     finally:
-        cursor.close()
         conn.close()
+
 
 def cancel_booking(message):
     try:
-        conn = get_connection()
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM bookings WHERE user_id = %s",
-                (message.from_user.id,)
-            )
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        # Получаем данные записи перед удалением
+        cursor.execute("SELECT * FROM bookings WHERE user_id = ?", (message.from_user.id,))
+        booking_to_delete = cursor.fetchone()
+        
+        if booking_to_delete:
+            # Формируем данные для уведомления
+            booking_data = {
+                'user_id': booking_to_delete[1],
+                'username': booking_to_delete[2],
+                'first_name': booking_to_delete[3],
+                'last_name': booking_to_delete[4],
+                'date': booking_to_delete[5],
+                'time_slot': booking_to_delete[6],
+                'full_name': booking_to_delete[7],
+                'room_number': booking_to_delete[8]
+            }
+            
+            # Удаляем запись
+            cursor.execute("DELETE FROM bookings WHERE user_id = ?", (message.from_user.id,))
             conn.commit()
-            cursor.close()
-            conn.close()
-
+            
+            # Отправляем уведомление об удалении
+            send_admin_notification("🗑️ Запись отменена пользователем", booking_data)
+            
             bot.send_message(
                 message.chat.id,
                 "✅ Ваша запись успешно отменена.",
                 reply_markup=main_menu()
             )
         else:
-            bot.send_message(message.chat.id, "Ошибка подключения к базе данных")
+            bot.send_message(
+                message.chat.id,
+                "❌ У вас нет активных записей для отмены.",
+                reply_markup=main_menu()
+            )
 
     except Exception as e:
         logger.error(f"Ошибка при отмене записи: {e}")
         bot.send_message(message.chat.id, "Произошла ошибка при отмене записи")
+    
+    finally:
+        conn.close()
+
 
 # Функция для поддержания активности сервера
 def ping_self():
@@ -409,16 +465,18 @@ def ping_self():
         try:
             # Получаем URL из переменных окружения или используем дефолтный
             base_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:4000')
-            response = requests.get(f'{base_url}/keepalive', timeout=10)
+            response = requests.get(f'{base_url}/health', timeout=10)
             print(f"Self-ping successful: {response.status_code}")
         except Exception as e:
             print(f"Self-ping failed: {e}")
-        time.sleep(10)  # Каждые 10 секунд
+        time.sleep(300)  # Каждые 5 минут
+
 
 def start_bot():
     """Запуск Telegram бота"""
     logger.info("Бот запущен...")
     bot.infinity_polling()
+
 
 def start_flask_server():
     """Запуск Flask сервера"""
@@ -428,6 +486,7 @@ def start_flask_server():
         port=port,
         debug=False
     )
+
 
 if __name__ == '__main__':
     # Инициализация базы данных
