@@ -34,7 +34,7 @@ def start_flask_server():
         scheduler.add_job(run_ping_site, 'interval', minutes=10)
         scheduler.start()
         
-        port = int(os.environ.get('PORT', 8888))
+        port = int(os.environ.get('PORT', 4000))
         print(f"Запуск Flask сервера на порту {port}...")
         serve(app, host='0.0.0.0', port=port)
     
