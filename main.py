@@ -19,7 +19,7 @@ app = Flask(__name__)
 # Конфигурация бота
 BOT_TOKEN = "8290372805:AAGwVsrTZYXgZYOGWWB_Eq9DtlNC6KkAGto"
 DEVELOPER_LINK = "https://t.me/Retur8827"
-ADMIN_USER_ID = 1621050180
+ADMIN_USER_ID = 123456789  # Замените на ID пользователя, которому нужно отправлять уведомления
 bot = TeleBot(BOT_TOKEN)
 
 # Глобальные переменные
@@ -29,6 +29,8 @@ TIME_SLOTS = [
     "20:00-21:00", "21:00-22:00", "22:00-23:00"
 ]
 
+# Флаг для контроля работы бота
+bot_running = False
 
 # Маршруты Flask
 @app.route('/')
@@ -474,8 +476,30 @@ def ping_self():
 
 def start_bot():
     """Запуск Telegram бота"""
+    global bot_running
+    if bot_running:
+        logger.info("Бот уже запущен, пропускаем повторный запуск")
+        return
+    
+    bot_running = True
     logger.info("Бот запущен...")
-    bot.infinity_polling()
+    
+    try:
+        # Останавливаем любые предыдущие обновления
+        bot.remove_webhook()
+        time.sleep(1)
+        
+        # Запускаем polling с обработкой ошибок
+        while True:
+            try:
+                bot.infinity_polling(timeout=30, long_polling_timeout=30)
+            except Exception as e:
+                logger.error(f"Ошибка в polling: {e}. Перезапуск через 5 секунд...")
+                time.sleep(5)
+    except Exception as e:
+        logger.error(f"Критическая ошибка при запуске бота: {e}")
+    finally:
+        bot_running = False
 
 
 def start_flask_server():
@@ -484,7 +508,8 @@ def start_flask_server():
     app.run(
         host='0.0.0.0',
         port=port,
-        debug=False
+        debug=False,
+        use_reloader=False  # Отключаем автоматическую перезагрузку
     )
 
 
@@ -502,5 +527,8 @@ if __name__ == '__main__':
     flask_thread = threading.Thread(target=start_flask_server, daemon=True)
     flask_thread.start()
 
+    # Небольшая задержка перед запуском бота
+    time.sleep(2)
+    
     # Запуск бота в основном потоке
     start_bot()
