@@ -193,6 +193,69 @@ def start_command(message):
     )
 
 
+# Команда для администратора - удаление записи пользователя
+@bot.message_handler(commands=['del'])
+def delete_user_booking(message):
+    """Удаляет запись пользователя по ID (только для администратора)"""
+    if message.from_user.id != ADMIN_USER_ID:
+        bot.send_message(message.chat.id, "❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        # Получаем ID пользователя из команды
+        command_parts = message.text.split()
+        if len(command_parts) < 2:
+            bot.send_message(message.chat.id, "❌ Использование: /del <user_id>")
+            return
+        
+        user_id_to_delete = int(command_parts[1])
+        
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        # Получаем данные записи перед удалением
+        cursor.execute("SELECT * FROM bookings WHERE user_id = ?", (user_id_to_delete,))
+        booking_to_delete = cursor.fetchone()
+        
+        if booking_to_delete:
+            # Формируем данные для уведомления
+            booking_data = {
+                'user_id': booking_to_delete[1],
+                'username': booking_to_delete[2],
+                'first_name': booking_to_delete[3],
+                'last_name': booking_to_delete[4],
+                'date': booking_to_delete[5],
+                'time_slot': booking_to_delete[6],
+                'full_name': booking_to_delete[7],
+                'room_number': booking_to_delete[8]
+            }
+            
+            # Удаляем запись
+            cursor.execute("DELETE FROM bookings WHERE user_id = ?", (user_id_to_delete,))
+            conn.commit()
+            conn.close()
+            
+            # Отправляем уведомление об удалении
+            send_admin_notification("🗑️ Запись удалена администратором", booking_data)
+            
+            bot.send_message(
+                message.chat.id,
+                f"✅ Запись пользователя {user_id_to_delete} успешно удалена."
+            )
+        else:
+            conn.close()
+            bot.send_message(
+                message.chat.id,
+                f"❌ Запись для пользователя {user_id_to_delete} не найдена."
+            )
+            
+    except ValueError:
+        bot.send_message(message.chat.id, "❌ Неверный формат ID пользователя.")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении записи администратором: {e}")
+        bot.send_message(message.chat.id, "❌ Произошла ошибка при удалении записи.")
+
+
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
     try:
@@ -448,7 +511,7 @@ def cancel_booking(message):
         else:
             bot.send_message(
                 message.chat.id,
-                "❌ У вас нет активных записей для отмены.",
+                "❌ У вас нет активных записей для отменя.",
                 reply_markup=main_menu()
             )
 
@@ -532,4 +595,3 @@ if __name__ == '__main__':
     
     # Запуск бота в основном потоке
     start_bot()
-
