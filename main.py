@@ -1,22 +1,46 @@
+from flask import Flask
+import os
+import threading
+import time
+import requests
 import sqlite3
 import datetime
 import logging
 from telebot import TeleBot, types
 from threading import Timer
-from flasr_server import start_flask_server
-import threading
-import time
 
-
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Инициализация Flask приложения
+app = Flask(__name__)
+
+# Конфигурация бота
 BOT_TOKEN = "8290372805:AAGwVsrTZYXgZYOGWWB_Eq9DtlNC6KkAGto"
-#DEVELOPER_LINK = "https://t.me/QueueLaundryBot"
 DEVELOPER_LINK = "https://t.me/Retur8827"
 bot = TeleBot(BOT_TOKEN)
 
+# Глобальные переменные
+TIME_SLOTS = [
+    "08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00",
+    "16:00-17:00", "17:00-18:00", "18:00-19:00", "19:00-20:00",
+    "20:00-21:00", "21:00-22:00", "22:00-23:00"
+]
 
+
+# Маршруты Flask
+@app.route('/')
+def index():
+    return "Пустой сервер работает!!"
+
+
+@app.route('/health')
+def health_check():
+    return "OK", 200
+
+
+# Функции для работы с базой данных
 def init_db():
     conn = sqlite3.connect('laundry.db')
     cursor = conn.cursor()
@@ -40,15 +64,6 @@ def init_db():
     conn.close()
 
 
-init_db()
-
-TIME_SLOTS = [
-    "08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00",
-    "16:00-17:00", "17:00-18:00", "18:00-19:00", "19:00-20:00",
-    "20:00-21:00", "21:00-22:00", "22:00-23:00"
-]
-
-
 def cleanup_old_records():
     try:
         today = datetime.datetime.now().strftime("%d-%m-%Y")
@@ -57,7 +72,6 @@ def cleanup_old_records():
         cursor.execute("DELETE FROM bookings WHERE date < ?", (today,))
         conn.commit()
         conn.close()
-        #logger.info(f"{today}")
         logger.info("Старые записи очищены")
     except Exception as e:
         logger.error(f"Ошибка при очистке записей: {e}")
@@ -75,9 +89,6 @@ def daily_cleanup_task():
     schedule_daily_cleanup()
 
 
-schedule_daily_cleanup()
-
-
 def get_booked_slots(date):
     try:
         conn = sqlite3.connect('laundry.db')
@@ -91,6 +102,7 @@ def get_booked_slots(date):
         return []
 
 
+# Функции для работы с Telegram ботом
 def main_menu():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     today_btn = types.KeyboardButton("📅 Сегодня")
@@ -265,12 +277,11 @@ def process_booking_data(message, booking):
                 )
                 conn.commit()
 
-                cursor.execute("SELECT date, time_slot, full_name, room_number FROM bookings WHERE id = ?", (booking[0],))
+                cursor.execute("SELECT date, time_slot, full_name, room_number FROM bookings WHERE id = ?",
+                               (booking[0],))
                 updated_data = cursor.fetchone()
 
                 logger.info(f"Updated data: {updated_data}")
-
-                #daily_cleanup_task()
 
                 if updated_data:
                     bot.send_message(
@@ -337,9 +348,49 @@ def cancel_booking(message):
         bot.send_message(message.chat.id, "Произошла ошибка при отмене записи")
 
 
-if __name__ == "__main__":
+# Функция для поддержания активности сервера
+def ping_self():
+    """Пинг самого себя для поддержания активности"""
+    while True:
+        try:
+            # Получаем URL из переменных окружения или используем дефолтный
+            base_url = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:4000')
+            response = requests.get(f'{base_url}/health', timeout=10)
+            print(f"Self-ping successful: {response.status_code}")
+        except Exception as e:
+            print(f"Self-ping failed: {e}")
+        time.sleep(300)  # Каждые 5 минут
+
+
+def start_bot():
+    """Запуск Telegram бота"""
     logger.info("Бот запущен...")
     bot.infinity_polling()
-    start_flask_server()
 
 
+def start_flask_server():
+    """Запуск Flask сервера"""
+    port = int(os.environ.get('PORT', 4000))
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=False
+    )
+
+
+if __name__ == '__main__':
+    # Инициализация базы данных
+    init_db()
+
+    # Запуск ежедневной очистки
+    schedule_daily_cleanup()
+
+    # Запуск keep-alive в фоновом режиме
+    threading.Thread(target=ping_self, daemon=True).start()
+
+    # Запуск Flask сервера в отдельном потоке
+    flask_thread = threading.Thread(target=start_flask_server, daemon=True)
+    flask_thread.start()
+
+    # Запуск бота в основном потоке
+    start_bot()
