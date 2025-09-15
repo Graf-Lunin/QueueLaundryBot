@@ -113,6 +113,86 @@ def debug_db():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/debug/db/data')
+def debug_db_data():
+    """Показать все данные из базы данных"""
+    try:
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        # Получаем все таблицы
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = [table[0] for table in cursor.fetchall()]
+        
+        result = {}
+        
+        for table in tables:
+            # Получаем структуру таблицы (колонки)
+            cursor.execute(f"PRAGMA table_info({table})")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            # Получаем все данные из таблицы
+            cursor.execute(f"SELECT * FROM {table}")
+            rows = cursor.fetchall()
+            
+            # Форматируем данные
+            table_data = []
+            for row in rows:
+                row_data = {}
+                for i, value in enumerate(row):
+                    row_data[columns[i]] = value
+                table_data.append(row_data)
+            
+            result[table] = {
+                'columns': columns,
+                'data': table_data,
+                'total_rows': len(rows)
+            }
+        
+        conn.close()
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/debug/db/bookings')
+def debug_db_bookings():
+    """Показать данные только из таблицы bookings"""
+    try:
+        conn = sqlite3.connect('laundry.db')
+        cursor = conn.cursor()
+        
+        # Получаем структуру таблицы bookings
+        cursor.execute("PRAGMA table_info(bookings)")
+        columns = [col[1] for col in cursor.fetchall()]
+        
+        # Получаем все данные из bookings
+        cursor.execute("SELECT * FROM bookings ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+        
+        # Форматируем данные
+        bookings_data = []
+        for row in rows:
+            booking = {}
+            for i, value in enumerate(row):
+                booking[columns[i]] = value
+            bookings_data.append(booking)
+        
+        conn.close()
+        
+        return jsonify({
+            'table': 'bookings',
+            'columns': columns,
+            'total_records': len(rows),
+            'data': bookings_data
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 # Функции для работы с базой данных
 def init_db():
     conn = sqlite3.connect('laundry.db')
@@ -467,3 +547,4 @@ if __name__ == '__main__':
 
     # Запуск бота в основном потоке
     start_bot()
+
