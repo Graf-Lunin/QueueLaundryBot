@@ -19,7 +19,7 @@ app = Flask(__name__)
 # Конфигурация бота
 BOT_TOKEN = "8290372805:AAGwVsrTZYXgZYOGWWB_Eq9DtlNC6KkAGto"
 DEVELOPER_LINK = "https://t.me/Retur8827"
-ADMIN_USER_ID = 123456789  # Замените на ID пользователя, которому нужно отправлять уведомления
+ADMIN_USER_ID = 1621050180
 bot = TeleBot(BOT_TOKEN)
 
 # Глобальные переменные
@@ -532,3 +532,4 @@ if __name__ == '__main__':
     
     # Запуск бота в основном потоке
     start_bot()
+
